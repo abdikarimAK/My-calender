@@ -1,3 +1,5 @@
+// CALENDAR APP VERSION 3.0 - FIXED DUPLICATE SUPABASE ERROR
+// Last updated: 2026-01-14
 // Constants
 const NORWEGIAN_MONTHS = ['Januar', 'Februar', 'Mars', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Desember'];
 const NORWEGIAN_WEEKDAYS = ['Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør', 'Søn'];
@@ -14,7 +16,13 @@ let weekOffset = 0;
 let currentSelectedStatus = 'unknown';
 
 // Get Supabase client from config (already initialized in supabase-config.js)
-const supabase = window.supabaseClient;
+let supabase = window.supabaseClient;
+
+// Safety check
+if (!supabase) {
+    console.error('❌ ERROR: Supabase client not initialized!');
+    console.error('💡 Make sure supabase-config.js loaded before this file');
+}
 
 // ============================================
 // SUPABASE FUNCTIONS
