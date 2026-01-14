@@ -13,7 +13,7 @@ let editingDate = null;
 let weekOffset = 0;
 let currentSelectedStatus = 'unknown';
 
-// Get Supabase client from config
+// Get Supabase client from config (already initialized in supabase-config.js)
 const supabase = window.supabaseClient;
 
 // ============================================
@@ -22,17 +22,26 @@ const supabase = window.supabaseClient;
 
 // Load all calendar data from database
 async function loadCalendarDataFromDB() {
+    console.log('📡 DEBUG: Fetching calendar data from Supabase...');
     try {
         const { data, error } = await supabase
             .from('calendar_data')
             .select('*');
 
-        if (error) throw error;
+        if (error) {
+            console.error('❌ DATABASE ERROR:', error);
+            console.error('Error details:', error.message);
+            throw error;
+        }
+
+        console.log('✅ DEBUG: Raw data from database:', data);
+        console.log('📊 DEBUG: Number of records:', data ? data.length : 0);
 
         // Convert array to object with date as key
         const dataObj = {};
         if (data) {
             data.forEach(item => {
+                console.log(`📅 DEBUG: Processing date ${item.date}:`, item);
                 dataObj[item.date] = {
                     status: item.status,
                     message: item.message || ''
@@ -40,9 +49,12 @@ async function loadCalendarDataFromDB() {
             });
         }
 
+        console.log('✅ DEBUG: Processed calendar data:', dataObj);
         return dataObj;
     } catch (error) {
-        console.error('Error loading calendar data:', error);
+        console.error('❌ ERROR loading calendar data:', error);
+        console.error('💡 TIP: Check if calendar_data table exists in Supabase');
+        alert('FEIL ved lasting av kalenderdata!\n\n' + error.message);
         return {};
     }
 }
@@ -339,11 +351,23 @@ function renderDayRow(date, dateString, data, isCurrentMonth) {
 }
 
 function renderMonthGrid() {
+    console.log('🎨 DEBUG: Rendering month grid...');
     const daysGrid = document.getElementById('daysGrid');
+
+    if (!daysGrid) {
+        console.error('❌ ERROR: daysGrid element not found!');
+        console.error('💡 TIP: Check if HTML has element with id="daysGrid"');
+        return;
+    }
+
+    console.log('✅ DEBUG: daysGrid element found');
     daysGrid.innerHTML = '';
 
     const daysInMonth = getDaysInMonth(currentDate);
     const firstDayIndex = getFirstDayOfMonth(currentDate);
+
+    console.log(`📊 DEBUG: Rendering ${daysInMonth} days for ${NORWEGIAN_MONTHS[currentDate.getMonth()]} ${currentDate.getFullYear()}`);
+    console.log(`📊 DEBUG: First day index: ${firstDayIndex}`);
 
     // Previous month padding
     const prevMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
@@ -361,7 +385,13 @@ function renderMonthGrid() {
     for (let day = 1; day <= daysInMonth; day++) {
         const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
         const dateString = formatDateISO(date);
-        const cell = renderDayCell(date, dateString, calendarData[dateString], true);
+        const cellData = calendarData[dateString];
+
+        if (cellData) {
+            console.log(`✨ DEBUG: Day ${day} (${dateString}) has data:`, cellData);
+        }
+
+        const cell = renderDayCell(date, dateString, cellData, true);
         daysGrid.appendChild(cell);
     }
 
@@ -376,6 +406,8 @@ function renderMonthGrid() {
         const cell = renderDayCell(date, dateString, calendarData[dateString], false);
         daysGrid.appendChild(cell);
     }
+
+    console.log(`✅ DEBUG: Month grid rendered with ${daysGrid.children.length} total cells`);
 }
 
 function renderWeekView() {
@@ -595,17 +627,43 @@ async function handleSaveEdit(e) {
 // ============================================
 
 async function init() {
+    console.log('🚀 DEBUG: Starting calendar initialization...');
+
+    // Check if Supabase is available
+    if (!window.supabaseClient) {
+        console.error('❌ ERROR: supabaseClient not found!');
+        console.error('💡 TIP: Check if supabase-config.js loaded correctly');
+        alert('FEIL: Supabase ikke tilkoblet!\n\nÅpne Console (F12) for detaljer.');
+        return;
+    }
+    console.log('✅ DEBUG: Supabase client available');
+
     // Check if user is already logged in
+    console.log('🔍 DEBUG: Checking existing session...');
     await checkExistingSession();
+    console.log('✅ DEBUG: Session check complete. isAdmin:', isAdmin);
 
     // Load calendar data from database
+    console.log('🔍 DEBUG: Loading calendar data from database...');
     calendarData = await loadCalendarDataFromDB();
+    console.log('✅ DEBUG: Calendar data loaded. Number of days:', Object.keys(calendarData).length);
+    console.log('📊 DEBUG: Calendar data:', calendarData);
 
     // Initial render
+    console.log('🎨 DEBUG: Starting initial render...');
     updateHeader();
+    console.log('✅ DEBUG: Header updated');
+
     updateAuthUI();
+    console.log('✅ DEBUG: Auth UI updated');
+
     renderMonthGrid();
+    console.log('✅ DEBUG: Month grid rendered');
+
     renderWeekView();
+    console.log('✅ DEBUG: Week view rendered');
+
+    console.log('🎉 DEBUG: Calendar initialization complete!');
 
     // Event Listeners
 
