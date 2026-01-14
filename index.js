@@ -4,18 +4,158 @@ const NORWEGIAN_WEEKDAYS = ['Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør', 'Søn'];
 const NORWEGIAN_DAY_NAMES = ['Søndag', 'Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag', 'Lørdag'];
 const NORWEGIAN_MONTH_NAMES = ['januar', 'februar', 'mars', 'april', 'mai', 'juni', 'juli', 'august', 'september', 'oktober', 'november', 'desember'];
 
-const STORAGE_KEY_DATA = 'calendar_app_data';
-const STORAGE_KEY_AUTH = 'calendar_app_is_admin';
-
 // State
 let currentDate = new Date();
 let calendarData = {};
 let isAdmin = false;
+let currentUser = null;
 let editingDate = null;
 let weekOffset = 0;
 let currentSelectedStatus = 'unknown';
 
-// Utility Functions
+// Get Supabase client from config
+const supabase = window.supabaseClient;
+
+// ============================================
+// SUPABASE FUNCTIONS
+// ============================================
+
+// Load all calendar data from database
+async function loadCalendarDataFromDB() {
+    try {
+        const { data, error } = await supabase
+            .from('calendar_data')
+            .select('*');
+
+        if (error) throw error;
+
+        // Convert array to object with date as key
+        const dataObj = {};
+        if (data) {
+            data.forEach(item => {
+                dataObj[item.date] = {
+                    status: item.status,
+                    message: item.message || ''
+                };
+            });
+        }
+
+        return dataObj;
+    } catch (error) {
+        console.error('Error loading calendar data:', error);
+        return {};
+    }
+}
+
+// Save or update a day's data
+async function saveDayToDB(dateString, status, message) {
+    try {
+        if (!currentUser) {
+            throw new Error('User not authenticated');
+        }
+
+        const { data, error } = await supabase
+            .from('calendar_data')
+            .upsert({
+                date: dateString,
+                status: status,
+                message: message || '',
+                updated_by: currentUser.id,
+                updated_at: new Date().toISOString()
+            }, {
+                onConflict: 'date'
+            })
+            .select();
+
+        if (error) throw error;
+
+        return true;
+    } catch (error) {
+        console.error('Error saving day:', error);
+        alert('Kunne ikke lagre endringer. Vennligst prøv igjen.');
+        return false;
+    }
+}
+
+// Login with Supabase Auth
+async function loginUser(email, password) {
+    try {
+        // Sign in with Supabase
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+            email: email,
+            password: password
+        });
+
+        if (authError) throw authError;
+
+        // Check if user is admin
+        const { data: userData, error: userError } = await supabase
+            .from('users')
+            .select('is_admin, username')
+            .eq('email', email)
+            .single();
+
+        if (userError) throw userError;
+
+        if (!userData.is_admin) {
+            await supabase.auth.signOut();
+            throw new Error('Ikke admin bruker');
+        }
+
+        currentUser = authData.user;
+        isAdmin = true;
+
+        return { success: true, user: userData };
+    } catch (error) {
+        console.error('Login error:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+// Logout
+async function logoutUser() {
+    try {
+        await supabase.auth.signOut();
+        currentUser = null;
+        isAdmin = false;
+        return true;
+    } catch (error) {
+        console.error('Logout error:', error);
+        return false;
+    }
+}
+
+// Check if user is already logged in on page load
+async function checkExistingSession() {
+    try {
+        const { data: { session } } = await supabase.auth.getSession();
+
+        if (session) {
+            // User has active session, verify admin status
+            const { data: userData, error } = await supabase
+                .from('users')
+                .select('is_admin, username')
+                .eq('id', session.user.id)
+                .single();
+
+            if (!error && userData && userData.is_admin) {
+                currentUser = session.user;
+                isAdmin = true;
+                return true;
+            }
+        }
+
+        return false;
+    } catch (error) {
+        console.error('Session check error:', error);
+        return false;
+    }
+}
+
+// ============================================
+// UTILITY FUNCTIONS
+// ============================================
+
 function getDaysInMonth(date) {
     return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
 }
@@ -63,41 +203,6 @@ function getWeekStart(date, offset = 0) {
     return d;
 }
 
-// Storage Functions
-function loadCalendarData() {
-    try {
-        const stored = localStorage.getItem(STORAGE_KEY_DATA);
-        return stored ? JSON.parse(stored) : {};
-    } catch (e) {
-        console.error('Failed to load calendar data', e);
-        return {};
-    }
-}
-
-function saveCalendarData(data) {
-    try {
-        localStorage.setItem(STORAGE_KEY_DATA, JSON.stringify(data));
-    } catch (e) {
-        console.error('Failed to save calendar data', e);
-    }
-}
-
-function loadAuthState() {
-    try {
-        return localStorage.getItem(STORAGE_KEY_AUTH) === 'true';
-    } catch (e) {
-        return false;
-    }
-}
-
-function saveAuthState(admin) {
-    try {
-        localStorage.setItem(STORAGE_KEY_AUTH, String(admin));
-    } catch (e) {
-        console.error('Failed to save auth state', e);
-    }
-}
-
 // Icon SVG helpers
 function getCheckIcon() {
     return '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>';
@@ -115,7 +220,10 @@ function getChevronRightIcon() {
     return '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>';
 }
 
-// Render Functions
+// ============================================
+// RENDER FUNCTIONS
+// ============================================
+
 function renderDayCell(date, dateString, data, isCurrentMonth) {
     const status = data?.status || 'unknown';
     const message = data?.message || '';
@@ -152,7 +260,7 @@ function renderDayCell(date, dateString, data, isCurrentMonth) {
         </div>
     `;
 
-    if (isAdmin) {
+    if (isAdmin && isCurrentMonth) {
         cell.addEventListener('click', () => openEditModal(dateString));
     }
 
@@ -223,7 +331,7 @@ function renderDayRow(date, dateString, data, isCurrentMonth) {
         </div>
     `;
 
-    if (isAdmin) {
+    if (isAdmin && isCurrentMonth) {
         row.addEventListener('click', () => openEditModal(dateString));
     }
 
@@ -258,7 +366,7 @@ function renderMonthGrid() {
     }
 
     // Next month padding
-    const totalCells = firstDayIndex + daysInMonth;
+    const totalCells = daysGrid.children.length;
     const remainingCells = 42 - totalCells;
     const nextMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1);
 
@@ -274,82 +382,72 @@ function renderWeekView() {
     const weekDaysList = document.getElementById('weekDaysList');
     weekDaysList.innerHTML = '';
 
-    // Use today's date for week view instead of currentDate
-    const today = new Date();
-    const weekStart = getWeekStart(today, weekOffset);
+    const weekStart = getWeekStart(currentDate, weekOffset);
+    const weekNum = getWeekNumber(weekStart);
+
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+
+    document.getElementById('weekNumber').textContent = `Uke ${weekNum}`;
+    document.getElementById('weekRange').textContent = `${weekStart.getDate()}. - ${weekEnd.getDate()}. ${NORWEGIAN_MONTH_NAMES[weekEnd.getMonth()]} ${weekEnd.getFullYear()}`;
 
     for (let i = 0; i < 7; i++) {
         const date = new Date(weekStart);
-        date.setDate(weekStart.getDate() + i);
+        date.setDate(date.getDate() + i);
         const dateString = formatDateISO(date);
-        const isCurrentMonth = date.getMonth() === currentDate.getMonth();
-
-        const dayContainer = document.createElement('div');
-        dayContainer.style.animationDelay = `${i * 50}ms`;
-        dayContainer.style.animationFillMode = 'backwards';
-        dayContainer.className = 'animate-fade-in';
-
-        const row = renderDayRow(date, dateString, calendarData[dateString], isCurrentMonth);
-        dayContainer.appendChild(row);
-        weekDaysList.appendChild(dayContainer);
+        const row = renderDayRow(date, dateString, calendarData[dateString], true);
+        weekDaysList.appendChild(row);
     }
-
-    // Update week info
-    const firstDay = new Date(weekStart);
-    const lastDay = new Date(weekStart);
-    lastDay.setDate(lastDay.getDate() + 6);
-
-    document.getElementById('weekNumber').textContent = `Uke ${getWeekNumber(firstDay)}`;
-    document.getElementById('weekRange').textContent = `${firstDay.getDate()}. - ${lastDay.getDate()}. ${NORWEGIAN_MONTH_NAMES[firstDay.getMonth()]} ${firstDay.getFullYear()}`;
-
-    // Update the main header to show the month of the first day of the week
-    document.getElementById('monthName').textContent = NORWEGIAN_MONTHS[firstDay.getMonth()];
-    document.getElementById('yearName').textContent = firstDay.getFullYear();
 }
 
 function updateHeader() {
-    document.getElementById('monthName').textContent = NORWEGIAN_MONTHS[currentDate.getMonth()];
-    document.getElementById('yearName').textContent = currentDate.getFullYear();
+    const monthName = NORWEGIAN_MONTHS[currentDate.getMonth()];
+    const year = currentDate.getFullYear();
+    document.getElementById('monthName').textContent = monthName;
+    document.getElementById('yearName').textContent = year;
 }
 
 function updateAuthUI() {
     const loginBtn = document.getElementById('loginBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
     const adminBadge = document.getElementById('adminBadge');
 
     if (isAdmin) {
         loginBtn.classList.add('hidden');
         adminBadge.classList.remove('hidden');
         adminBadge.classList.add('flex');
+        logoutBtn.classList.remove('hidden');
     } else {
         loginBtn.classList.remove('hidden');
         adminBadge.classList.add('hidden');
         adminBadge.classList.remove('flex');
+        logoutBtn.classList.add('hidden');
     }
 }
 
-function render() {
-    updateHeader();
-    updateAuthUI();
-    renderMonthGrid();
-    renderWeekView();
-}
+// ============================================
+// MODAL FUNCTIONS
+// ============================================
 
-// Modal Functions
 function openLoginModal() {
     const modal = document.getElementById('loginModal');
+    const usernameInput = document.getElementById('usernameInput');
+    const passwordInput = document.getElementById('passwordInput');
+    const errorDiv = document.getElementById('loginError');
+
     modal.classList.remove('hidden');
     modal.classList.add('flex');
-    document.getElementById('usernameInput').focus();
-    document.getElementById('loginError').classList.add('hidden');
+    usernameInput.value = '';
+    passwordInput.value = '';
+    errorDiv.classList.add('hidden');
+
+    setTimeout(() => usernameInput.focus(), 100);
 }
 
 function closeLoginModal() {
     const modal = document.getElementById('loginModal');
     modal.classList.add('hidden');
     modal.classList.remove('flex');
-    document.getElementById('usernameInput').value = '';
-    document.getElementById('passwordInput').value = '';
-    document.getElementById('loginError').classList.add('hidden');
 }
 
 function openEditModal(dateString) {
@@ -360,11 +458,14 @@ function openEditModal(dateString) {
     const data = calendarData[dateString];
 
     document.getElementById('editDateDisplay').textContent = dateString;
-    document.getElementById('messageInput').value = data?.message || '';
 
     // Set status
-    currentSelectedStatus = data?.status || 'unknown';
-    updateStatusSelection();
+    const status = data?.status || 'unknown';
+    currentSelectedStatus = status;
+    updateStatusSelection(status);
+
+    // Set message
+    document.getElementById('messageInput').value = data?.message || '';
 
     modal.classList.remove('hidden');
     modal.classList.add('flex');
@@ -375,131 +476,217 @@ function closeEditModal() {
     modal.classList.add('hidden');
     modal.classList.remove('flex');
     editingDate = null;
-    currentSelectedStatus = 'unknown';
 }
 
-function updateStatusSelection() {
+function updateStatusSelection(status) {
     const options = document.querySelectorAll('.status-option');
     options.forEach(option => {
-        const status = option.getAttribute('data-status');
-        if (status === currentSelectedStatus) {
-            option.classList.add('selected');
+        const optionStatus = option.getAttribute('data-status');
+        const icon = option.querySelector('.status-icon');
+        const label = option.querySelector('span');
+        const check = option.querySelector('.status-check');
+
+        if (optionStatus === status) {
+            option.classList.remove('bg-white', 'border-gray-200', 'hover-bg-gray-50', 'hover-border-gray-300');
+
+            if (status === 'available') {
+                option.classList.add('bg-emerald-100', 'border-emerald-300');
+                icon.classList.remove('bg-gray-100', 'text-gray-500');
+                icon.classList.add('bg-emerald-200', 'text-emerald-700');
+            } else if (status === 'unavailable') {
+                option.classList.add('bg-red-100', 'border-red-300');
+                icon.classList.remove('bg-gray-100', 'text-gray-500');
+                icon.classList.add('bg-red-200', 'text-red-700');
+            } else {
+                option.classList.add('bg-gray-50', 'border-gray-300');
+                icon.classList.remove('bg-gray-100', 'text-gray-500');
+                icon.classList.add('bg-gray-200', 'text-gray-600');
+            }
+
+            label.classList.remove('text-gray-600');
+            label.classList.add('text-gray-900');
+            check.classList.remove('hidden');
         } else {
-            option.classList.remove('selected');
+            option.classList.remove('bg-emerald-100', 'border-emerald-300', 'bg-red-100', 'border-red-300', 'bg-gray-50');
+            option.classList.add('bg-white', 'border-gray-200', 'hover-bg-gray-50', 'hover-border-gray-300');
+
+            icon.classList.remove('bg-emerald-200', 'text-emerald-700', 'bg-red-200', 'text-red-700', 'bg-gray-200', 'text-gray-600');
+            icon.classList.add('bg-gray-100', 'text-gray-500');
+
+            label.classList.remove('text-gray-900');
+            label.classList.add('text-gray-600');
+            check.classList.add('hidden');
         }
     });
 }
 
-// Event Handlers
-function handleLogin(e) {
-    e.preventDefault();
-    const username = document.getElementById('usernameInput').value;
-    const password = document.getElementById('passwordInput').value;
+// ============================================
+// EVENT HANDLERS
+// ============================================
 
-    if (username === 'admin' && password === 'admin123') {
-        isAdmin = true;
-        saveAuthState(true);
+async function handleLogin(e) {
+    e.preventDefault();
+
+    const email = document.getElementById('usernameInput').value;
+    const password = document.getElementById('passwordInput').value;
+    const errorDiv = document.getElementById('loginError');
+
+    // Show loading state
+    const loginButton = document.querySelector('#loginForm button[type="submit"]');
+    const originalText = loginButton.innerHTML;
+    loginButton.innerHTML = '<span>Logger inn...</span>';
+    loginButton.disabled = true;
+
+    const result = await loginUser(email, password);
+
+    if (result.success) {
         closeLoginModal();
-        render();
+        updateAuthUI();
+        renderMonthGrid();
+        renderWeekView();
     } else {
-        document.getElementById('loginError').classList.remove('hidden');
+        errorDiv.classList.remove('hidden');
+        loginButton.innerHTML = originalText;
+        loginButton.disabled = false;
     }
 }
 
-function handleLogout() {
-    isAdmin = false;
-    saveAuthState(false);
-    render();
+async function handleLogout() {
+    await logoutUser();
+    updateAuthUI();
+    renderMonthGrid();
+    renderWeekView();
 }
 
-function handleSaveDay(e) {
+async function handleSaveEdit(e) {
     e.preventDefault();
+
     if (!editingDate) return;
 
     const message = document.getElementById('messageInput').value;
 
-    calendarData[editingDate] = {
-        date: editingDate,
-        status: currentSelectedStatus,
-        message: message
-    };
+    // Show loading state
+    const saveButton = document.querySelector('#editForm button[type="submit"]');
+    const originalText = saveButton.innerHTML;
+    saveButton.innerHTML = '<span>Lagrer...</span>';
+    saveButton.disabled = true;
 
-    saveCalendarData(calendarData);
-    closeEditModal();
-    render();
+    const success = await saveDayToDB(editingDate, currentSelectedStatus, message);
+
+    if (success) {
+        // Update local data
+        calendarData[editingDate] = {
+            status: currentSelectedStatus,
+            message: message
+        };
+
+        // Re-render calendar
+        renderMonthGrid();
+        renderWeekView();
+        closeEditModal();
+    }
+
+    saveButton.innerHTML = originalText;
+    saveButton.disabled = false;
 }
 
-function handlePrevMonth() {
-    currentDate = getPreviousMonth(currentDate);
-    weekOffset = 0;
-    render();
-}
+// ============================================
+// INITIALIZATION
+// ============================================
 
-function handleNextMonth() {
-    currentDate = getNextMonth(currentDate);
-    weekOffset = 0;
-    render();
-}
+async function init() {
+    // Check if user is already logged in
+    await checkExistingSession();
 
-function handlePrevWeek() {
-    weekOffset--;
+    // Load calendar data from database
+    calendarData = await loadCalendarDataFromDB();
+
+    // Initial render
+    updateHeader();
+    updateAuthUI();
+    renderMonthGrid();
     renderWeekView();
-}
 
-function handleNextWeek() {
-    weekOffset++;
-    renderWeekView();
-}
+    // Event Listeners
 
-// Initialize
-function init() {
-    // Load data
-    calendarData = loadCalendarData();
-    isAdmin = loadAuthState();
+    // Month navigation
+    document.getElementById('prevMonthBtn').addEventListener('click', () => {
+        currentDate = getPreviousMonth(currentDate);
+        updateHeader();
+        renderMonthGrid();
+    });
 
-    // Event listeners - Navigation
-    document.getElementById('prevMonthBtn').addEventListener('click', handlePrevMonth);
-    document.getElementById('nextMonthBtn').addEventListener('click', handleNextMonth);
-    document.getElementById('prevWeekBtn').addEventListener('click', handlePrevWeek);
-    document.getElementById('nextWeekBtn').addEventListener('click', handleNextWeek);
+    document.getElementById('nextMonthBtn').addEventListener('click', () => {
+        currentDate = getNextMonth(currentDate);
+        updateHeader();
+        renderMonthGrid();
+    });
 
-    // Event listeners - Auth
+    // Week navigation
+    document.getElementById('prevWeekBtn').addEventListener('click', () => {
+        weekOffset--;
+        renderWeekView();
+    });
+
+    document.getElementById('nextWeekBtn').addEventListener('click', () => {
+        weekOffset++;
+        renderWeekView();
+    });
+
+    // Auth
     document.getElementById('loginBtn').addEventListener('click', openLoginModal);
     document.getElementById('logoutBtn').addEventListener('click', handleLogout);
+
+    // Login modal
+    document.getElementById('loginModal').addEventListener('click', (e) => {
+        if (e.target.id === 'loginModal') closeLoginModal();
+    });
     document.getElementById('closeLoginBtn').addEventListener('click', closeLoginModal);
     document.getElementById('cancelLoginBtn').addEventListener('click', closeLoginModal);
     document.getElementById('loginForm').addEventListener('submit', handleLogin);
 
-    // Event listeners - Edit Modal
+    // Edit modal
+    document.getElementById('editModal').addEventListener('click', (e) => {
+        if (e.target.id === 'editModal') closeEditModal();
+    });
     document.getElementById('closeEditBtn').addEventListener('click', closeEditModal);
     document.getElementById('cancelEditBtn').addEventListener('click', closeEditModal);
-    document.getElementById('editForm').addEventListener('submit', handleSaveDay);
+    document.getElementById('editForm').addEventListener('submit', handleSaveEdit);
 
-    // Status option buttons
-    const statusOptions = document.querySelectorAll('.status-option');
-    statusOptions.forEach(option => {
-        option.addEventListener('click', (e) => {
-            e.preventDefault();
-            currentSelectedStatus = option.getAttribute('data-status');
-            updateStatusSelection();
+    // Status selection
+    document.querySelectorAll('.status-option').forEach(option => {
+        option.addEventListener('click', () => {
+            const status = option.getAttribute('data-status');
+            currentSelectedStatus = status;
+            updateStatusSelection(status);
         });
     });
 
-    // Close modals on backdrop click
-    document.getElementById('loginModal').addEventListener('click', (e) => {
-        if (e.target.id === 'loginModal') {
-            closeLoginModal();
+    // Listen for auth state changes
+    supabase.auth.onAuthStateChange(async (event, session) => {
+        if (event === 'SIGNED_OUT') {
+            currentUser = null;
+            isAdmin = false;
+            updateAuthUI();
+            renderMonthGrid();
+            renderWeekView();
         }
     });
 
-    document.getElementById('editModal').addEventListener('click', (e) => {
-        if (e.target.id === 'editModal') {
-            closeEditModal();
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            const loginModal = document.getElementById('loginModal');
+            const editModal = document.getElementById('editModal');
+
+            if (!loginModal.classList.contains('hidden')) {
+                closeLoginModal();
+            }
+            if (!editModal.classList.contains('hidden')) {
+                closeEditModal();
+            }
         }
     });
-
-    // Initial render
-    render();
 }
 
 // Start the app when DOM is ready
