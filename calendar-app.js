@@ -1,5 +1,5 @@
-// CALENDAR APP VERSION 3.0 - FIXED DUPLICATE SUPABASE ERROR
-// Last updated: 2026-01-14
+// Admin Calendar - Production v1.0
+// Calendar with admin authentication and database storage
 // Constants
 const NORWEGIAN_MONTHS = ['Januar', 'Februar', 'Mars', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Desember'];
 const NORWEGIAN_WEEKDAYS = ['Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør', 'Søn'];
@@ -16,12 +16,11 @@ let weekOffset = 0;
 let currentSelectedStatus = 'unknown';
 
 // Get Supabase client from config (already initialized in supabase-config.js)
-let supabase = window.supabaseClient;
+const db = window.supabaseClient;
 
 // Safety check
-if (!supabase) {
+if (!db) {
     console.error('❌ ERROR: Supabase client not initialized!');
-    console.error('💡 Make sure supabase-config.js loaded before this file');
 }
 
 // ============================================
@@ -30,9 +29,8 @@ if (!supabase) {
 
 // Load all calendar data from database
 async function loadCalendarDataFromDB() {
-    console.log('📡 DEBUG: Fetching calendar data from Supabase...');
     try {
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('calendar_data')
             .select('*');
 
@@ -42,14 +40,11 @@ async function loadCalendarDataFromDB() {
             throw error;
         }
 
-        console.log('✅ DEBUG: Raw data from database:', data);
-        console.log('📊 DEBUG: Number of records:', data ? data.length : 0);
 
         // Convert array to object with date as key
         const dataObj = {};
         if (data) {
             data.forEach(item => {
-                console.log(`📅 DEBUG: Processing date ${item.date}:`, item);
                 dataObj[item.date] = {
                     status: item.status,
                     message: item.message || ''
@@ -57,11 +52,9 @@ async function loadCalendarDataFromDB() {
             });
         }
 
-        console.log('✅ DEBUG: Processed calendar data:', dataObj);
         return dataObj;
     } catch (error) {
         console.error('❌ ERROR loading calendar data:', error);
-        console.error('💡 TIP: Check if calendar_data table exists in Supabase');
         alert('FEIL ved lasting av kalenderdata!\n\n' + error.message);
         return {};
     }
@@ -74,7 +67,7 @@ async function saveDayToDB(dateString, status, message) {
             throw new Error('User not authenticated');
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('calendar_data')
             .upsert({
                 date: dateString,
@@ -101,7 +94,7 @@ async function saveDayToDB(dateString, status, message) {
 async function loginUser(email, password) {
     try {
         // Sign in with Supabase
-        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        const { data: authData, error: authError } = await db.auth.signInWithPassword({
             email: email,
             password: password
         });
@@ -109,7 +102,7 @@ async function loginUser(email, password) {
         if (authError) throw authError;
 
         // Check if user is admin
-        const { data: userData, error: userError } = await supabase
+        const { data: userData, error: userError } = await db
             .from('users')
             .select('is_admin, username')
             .eq('email', email)
@@ -118,7 +111,7 @@ async function loginUser(email, password) {
         if (userError) throw userError;
 
         if (!userData.is_admin) {
-            await supabase.auth.signOut();
+            await db.auth.signOut();
             throw new Error('Ikke admin bruker');
         }
 
@@ -135,7 +128,7 @@ async function loginUser(email, password) {
 // Logout
 async function logoutUser() {
     try {
-        await supabase.auth.signOut();
+        await db.auth.signOut();
         currentUser = null;
         isAdmin = false;
         return true;
@@ -148,11 +141,11 @@ async function logoutUser() {
 // Check if user is already logged in on page load
 async function checkExistingSession() {
     try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const { data: { session } } = await db.auth.getSession();
 
         if (session) {
             // User has active session, verify admin status
-            const { data: userData, error } = await supabase
+            const { data: userData, error } = await db
                 .from('users')
                 .select('is_admin, username')
                 .eq('id', session.user.id)
@@ -359,23 +352,18 @@ function renderDayRow(date, dateString, data, isCurrentMonth) {
 }
 
 function renderMonthGrid() {
-    console.log('🎨 DEBUG: Rendering month grid...');
     const daysGrid = document.getElementById('daysGrid');
 
     if (!daysGrid) {
         console.error('❌ ERROR: daysGrid element not found!');
-        console.error('💡 TIP: Check if HTML has element with id="daysGrid"');
         return;
     }
 
-    console.log('✅ DEBUG: daysGrid element found');
     daysGrid.innerHTML = '';
 
     const daysInMonth = getDaysInMonth(currentDate);
     const firstDayIndex = getFirstDayOfMonth(currentDate);
 
-    console.log(`📊 DEBUG: Rendering ${daysInMonth} days for ${NORWEGIAN_MONTHS[currentDate.getMonth()]} ${currentDate.getFullYear()}`);
-    console.log(`📊 DEBUG: First day index: ${firstDayIndex}`);
 
     // Previous month padding
     const prevMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
@@ -396,7 +384,6 @@ function renderMonthGrid() {
         const cellData = calendarData[dateString];
 
         if (cellData) {
-            console.log(`✨ DEBUG: Day ${day} (${dateString}) has data:`, cellData);
         }
 
         const cell = renderDayCell(date, dateString, cellData, true);
@@ -415,7 +402,6 @@ function renderMonthGrid() {
         daysGrid.appendChild(cell);
     }
 
-    console.log(`✅ DEBUG: Month grid rendered with ${daysGrid.children.length} total cells`);
 }
 
 function renderWeekView() {
@@ -635,43 +621,29 @@ async function handleSaveEdit(e) {
 // ============================================
 
 async function init() {
-    console.log('🚀 DEBUG: Starting calendar initialization...');
 
     // Check if Supabase is available
     if (!window.supabaseClient) {
         console.error('❌ ERROR: supabaseClient not found!');
-        console.error('💡 TIP: Check if supabase-config.js loaded correctly');
         alert('FEIL: Supabase ikke tilkoblet!\n\nÅpne Console (F12) for detaljer.');
         return;
     }
-    console.log('✅ DEBUG: Supabase client available');
 
     // Check if user is already logged in
-    console.log('🔍 DEBUG: Checking existing session...');
     await checkExistingSession();
-    console.log('✅ DEBUG: Session check complete. isAdmin:', isAdmin);
 
     // Load calendar data from database
-    console.log('🔍 DEBUG: Loading calendar data from database...');
     calendarData = await loadCalendarDataFromDB();
-    console.log('✅ DEBUG: Calendar data loaded. Number of days:', Object.keys(calendarData).length);
-    console.log('📊 DEBUG: Calendar data:', calendarData);
 
     // Initial render
-    console.log('🎨 DEBUG: Starting initial render...');
     updateHeader();
-    console.log('✅ DEBUG: Header updated');
 
     updateAuthUI();
-    console.log('✅ DEBUG: Auth UI updated');
 
     renderMonthGrid();
-    console.log('✅ DEBUG: Month grid rendered');
 
     renderWeekView();
-    console.log('✅ DEBUG: Week view rendered');
 
-    console.log('🎉 DEBUG: Calendar initialization complete!');
 
     // Event Listeners
 
@@ -729,7 +701,7 @@ async function init() {
     });
 
     // Listen for auth state changes
-    supabase.auth.onAuthStateChange(async (event, session) => {
+    db.auth.onAuthStateChange(async (event, session) => {
         if (event === 'SIGNED_OUT') {
             currentUser = null;
             isAdmin = false;
