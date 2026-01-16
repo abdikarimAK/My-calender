@@ -241,6 +241,9 @@ function renderDayCell(date, dateString, data, isCurrentMonth) {
     const status = data?.status || 'unknown';
     const message = data?.message || '';
     const isCurrentDay = isToday(date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const isPastDay = date < today;
 
     const statusConfig = {
         available: 'bg-emerald-100 hover-bg-emerald-200 border border-emerald-300 text-emerald-950',
@@ -255,7 +258,7 @@ function renderDayCell(date, dateString, data, isCurrentMonth) {
     };
 
     const cell = document.createElement('div');
-    cell.className = `relative p-2 sm-p-3 day-cell transition-all duration-200 flex flex-col group touch-manipulation ${isCurrentMonth ? 'current-month opacity-100' : 'other-month opacity-40 bg-gray-50'} ${isAdmin ? 'cursor-pointer active-scale-95 admin-mode' : 'cursor-default'} ${statusConfig[status]}`;
+    cell.className = `relative p-2 sm-p-3 day-cell transition-all duration-200 flex flex-col group touch-manipulation ${isCurrentMonth ? 'current-month opacity-100' : 'other-month opacity-40 bg-gray-50'} ${isPastDay && isCurrentMonth ? 'past-day' : ''} ${isAdmin ? 'cursor-pointer active-scale-95 admin-mode' : 'cursor-default'} ${statusConfig[status]}`;
 
     if (isAdmin && isCurrentMonth) {
         cell.classList.add('hover-shadow-lg');
@@ -284,6 +287,9 @@ function renderDayRow(date, dateString, data, isCurrentMonth) {
     const status = data?.status || 'unknown';
     const message = data?.message || '';
     const isCurrentDay = isToday(date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const isPastDay = date < today;
     const dayName = NORWEGIAN_DAY_NAMES[date.getDay()];
     const dayNumber = date.getDate();
     const monthName = NORWEGIAN_MONTH_NAMES[date.getMonth()];
@@ -315,7 +321,7 @@ function renderDayRow(date, dateString, data, isCurrentMonth) {
     const config = statusConfig[status];
 
     const row = document.createElement('div');
-    row.className = `relative p-4 border rounded-2xl transition-all duration-300 touch-manipulation group ${isCurrentMonth ? 'opacity-100' : 'opacity-50'} ${isAdmin ? 'cursor-pointer active-scale-95' : 'cursor-default'} ${config.bg} ${isAdmin ? 'hover-shadow-lg hover--translate-y-0-5' : ''} ${isCurrentDay ? 'ring-2 ring-blue-500 ring-offset-2 shadow-md' : 'shadow-sm'}`;
+    row.className = `relative p-4 border rounded-2xl transition-all duration-300 touch-manipulation group ${isCurrentMonth ? 'opacity-100' : 'opacity-50'} ${isPastDay && isCurrentMonth ? 'opacity-60 bg-gray-100' : ''} ${isAdmin ? 'cursor-pointer active-scale-95' : 'cursor-default'} ${config.bg} ${isAdmin ? 'hover-shadow-lg hover--translate-y-0-5' : ''} ${isCurrentDay ? 'ring-2 ring-blue-500 ring-offset-2 shadow-md' : 'shadow-sm'}`;
 
     row.innerHTML = `
         ${isCurrentDay ? '<div class="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full animate-pulse shadow-lg shadow-blue-500-50"></div>' : ''}
@@ -621,11 +627,16 @@ async function handleSaveEdit(e) {
 // ============================================
 
 async function init() {
+    // Show loading screen
+    const loadingScreen = document.getElementById('loadingScreen');
+    const app = document.getElementById('app');
 
     // Check if Supabase is available
     if (!window.supabaseClient) {
         console.error('❌ ERROR: supabaseClient not found!');
         alert('FEIL: Supabase ikke tilkoblet!\n\nÅpne Console (F12) for detaljer.');
+        // Hide loader even on error
+        hideLoader();
         return;
     }
 
@@ -643,6 +654,20 @@ async function init() {
     renderMonthGrid();
 
     renderWeekView();
+
+    // Hide loading screen and show app
+    hideLoader();
+
+    // Helper function to hide loader
+    function hideLoader() {
+        loadingScreen.classList.add('fade-out');
+        app.style.display = 'block';
+
+        // Remove loading screen from DOM after animation
+        setTimeout(() => {
+            loadingScreen.style.display = 'none';
+        }, 300);
+    }
 
 
     // Event Listeners
@@ -725,9 +750,38 @@ async function init() {
             }
         }
     });
+
+    // ============================================
+    // THEME TOGGLE FUNCTIONALITY
+    // ============================================
+    const themeToggle = document.getElementById('themeToggle');
+
+    // Load saved theme preference
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme === 'dark') {
+        document.body.classList.add('dark-mode');
+        themeToggle.checked = true;
+    }
+
+    // Theme toggle event listener
+    themeToggle.addEventListener('change', () => {
+        if (themeToggle.checked) {
+            document.body.classList.add('dark-mode');
+            localStorage.setItem('theme', 'dark');
+        } else {
+            document.body.classList.remove('dark-mode');
+            localStorage.setItem('theme', 'light');
+        }
+    });
 }
 
 // Start the app when DOM is ready
+// Apply saved theme immediately before anything else loads
+const savedTheme = localStorage.getItem('theme');
+if (savedTheme === 'dark') {
+    document.body.classList.add('dark-mode');
+}
+
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
 } else {
